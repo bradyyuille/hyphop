@@ -56,7 +56,7 @@ class KFAttention(nn.Module):
 
         # added clipping
         norm_x = torch.linalg.vector_norm(x, dim=-1, keepdim=True)
-        factor = torch.clamp(2.8 / (norm_x + 1e-7), max=1.0)
+        factor = torch.clamp(3.0 / (norm_x + 1e-7), max=1.0)
         return x * factor
 
     def _expmap0(self, x):
@@ -83,7 +83,7 @@ class KFAttention(nn.Module):
 
         return z
 
-    def forward(self, R, Y, karcher_steps: int = 4):
+    def forward(self, R, Y, karcher_steps: int = 1):
         Q = self._expmap0(self.W_Q(R))                                              # (S, d_h + 1)
         K = self._expmap0(self.W_K(Y))                                              # (M, d_h + 1)
         V = self._expmap0(self.W_V(self.W_K(Y)))                                    # (M, d_out + 1)

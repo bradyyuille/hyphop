@@ -17,7 +17,6 @@ class KFPooling(nn.Module):
         beta: float = None
     ):
         super().__init__()
-        
         self.embedder = nn.Linear(input_dim, hidden_dim)
 
         self.KFAttention = KFAttention(
@@ -31,13 +30,14 @@ class KFPooling(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(p=0.5),   # added dropout
             nn.Linear(hidden_dim, num_classes)
         )
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
         queries = self.embedder(x)                                          # (S, hidden_dim)
-        Z = self.KFAttention(queries, queries, karcher_steps=4)             # (S, hidden_dim)
+        Z = self.KFAttention(queries, queries)                              # (S, hidden_dim)
         return self.classifier(Z)                                           # (S, hidden_dim)
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -48,6 +48,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
         output = model(data)
         loss = F.cross_entropy(output, target)
         loss.backward()
+        # torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=5.0, norm_type=2)
         optimizer.step()
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
@@ -83,8 +84,8 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                        help='learning rate (default: 0.01)')
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+                        help='learning rate (default: 0.001)')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
     parser.add_argument('--no-accel', action='store_true',
@@ -130,7 +131,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
     model = KFPooling().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4) # added weight decay
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
