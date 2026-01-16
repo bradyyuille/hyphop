@@ -52,11 +52,11 @@ class KFAttention(nn.Module):
         Embed Euclidean vectors into the tangent space at the origin:
         """
         zeros = torch.zeros(x.shape[:-1] + (1,), device=x.device, dtype=x.dtype)    # (S/M, 1)
-        x = torch.cat([zeros, x], dim=-1)                                           # (S/M, d_h/d_out + 1)
+        x = torch.cat([zeros, x], dim=-1)                                           # (S/M, d_k/d_out + 1)
 
         # added clipping
         norm_x = torch.linalg.vector_norm(x, dim=-1, keepdim=True)
-        factor = torch.clamp(3.0 / (norm_x + 1e-7), max=1.0)
+        factor = torch.clamp(3.5 / (norm_x + 1e-7), max=1.0)
         return x * factor
 
     def _expmap0(self, x):
@@ -84,18 +84,23 @@ class KFAttention(nn.Module):
         return z
 
     def forward(self, R, Y, karcher_steps: int = 1):
-        Q = self._expmap0(self.W_Q(R))                                              # (S, d_h + 1)
-        K = self._expmap0(self.W_K(Y))                                              # (M, d_h + 1)
-        V = self._expmap0(self.W_V(self.W_K(Y)))                                    # (M, d_out + 1)
+        Q = self._expmap0(self.W_Q(R))                                              # (S, d_k + 1)
+        K = self._expmap0(self.W_K(Y))                                              # (M, d_k + 1)
+        V = self._expmap0(self.W_V(Y))                                              # (M, d_out + 1)
 
         similarities = g.inner(Q.unsqueeze(1), K.unsqueeze(0))                      # (S, M)
-        alpha = F.softmax(self.beta * similarities, dim=-1)
+        alpha = F.softmax(- self.beta * similarities, dim=-1)
 
         # self.debugger()
 
         Z_man = self._karcher_flow(alpha, V, steps=karcher_steps)                   # (S, d_out + 1)
         return g.logmap0(Z_man, k=self.k)[..., 1:]                                  # (S, d_out)
-    
+
+
+
+
+
+
     def debugger(self):
         if self.training:
             with torch.no_grad():

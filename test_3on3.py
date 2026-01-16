@@ -5,40 +5,82 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
-from layer import KFAttention
 
+from KFAttention import KFAttention
+from KFLayer import KFLayer
+from KFPooling import KFPooling
 
-class KFPooling(nn.Module):
-    def __init__(
-        self, 
-        input_dim: int = 784, 
-        hidden_dim: int = 128, 
-        num_classes: int = 10,
-        beta: float = None
-    ):
+from hflayers.activation import HopfieldCore
+
+model_params = {
+    "input_dim": 784,
+    "hidden_dim": 128,
+    "num_classes": 10,
+    "beta": None,
+    "num_memories": 64
+}
+
+class ModelWrapper(nn.Module):
+    def __init__(self, mode, input_dim, hidden_dim, num_classes, beta, num_memories=64):
         super().__init__()
+        self.mode = mode
         self.embedder = nn.Linear(input_dim, hidden_dim)
+        
+        # Karcher Flow Models
+        if mode == "kf_attention":
+            self.core = KFAttention(query_dim=hidden_dim, stored_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+        elif mode == "kf_pooling":
+            self.core = KFPooling(num_queries=1, stored_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+        elif mode == "kf_layer":
+            self.core = KFLayer(num_memories=num_memories, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+            
+        # HNIAYN Models
+        elif mode == "hf_attention":
+            self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1, dropout=0.0)
+        elif mode == "hf_pooling":
+            self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1, query_as_static=True)
+            self.static_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        elif mode == "hf_layer":
+            self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1, key_as_static=True, value_as_static=True)
+            self.static_key = nn.Parameter(torch.randn(num_memories, 1, hidden_dim) * 0.02)
+            self.static_value = nn.Parameter(torch.randn(num_memories, 1, hidden_dim) * 0.02)
 
-        self.KFAttention = KFAttention(
-            query_dim=hidden_dim,
-            stored_dim=hidden_dim,
-            hopfield_dim=hidden_dim,
-            out_dim=hidden_dim,
-            beta=beta
-        )
 
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.5),   # added dropout
+            # nn.Dropout(p=0.2),
             nn.Linear(hidden_dim, num_classes)
         )
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
-        queries = self.embedder(x)                                          # (S, hidden_dim)
-        Z = self.KFAttention(queries, queries)                              # (S, hidden_dim)
-        return self.classifier(Z)                                           # (S, hidden_dim)
+        embeds = self.embedder(x) # (B, hidden_dim)
+        batch_size = embeds.size(0) 
+
+        hniayn_embeds = embeds.unsqueeze(0) # expects (SeqLen, B, hidden_dim)
+
+        if self.mode == "kf_attention":
+            z = self.core(embeds, embeds)
+        elif self.mode == "kf_pooling":
+            z = self.core(embeds).squeeze(1)
+        elif self.mode == "kf_layer":
+            z = self.core(embeds)
+        elif self.mode == "hf_attention":
+            z, *_ = self.core(hniayn_embeds, hniayn_embeds, hniayn_embeds)
+            z = z.squeeze(0)
+        elif self.mode == "hf_pooling":
+            q = self.static_query.expand(-1, batch_size, -1)
+            z, *_ = self.core(q, hniayn_embeds, hniayn_embeds)
+            z = z.squeeze(0)
+        elif self.mode == "hf_layer":
+            k = self.static_key.expand(-1, batch_size, -1)
+            v = self.static_value.expand(-1, batch_size, -1)
+            z, *_ = self.core(hniayn_embeds, k, v)
+            z = z.squeeze(0)
+
+            
+        return self.classifier(z)
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
@@ -77,7 +119,10 @@ def test(model, device, test_loader):
 
 def main():
     # Training settings
-    parser = argparse.ArgumentParser(description='KFAttention MNIST')
+    parser = argparse.ArgumentParser(description='3on3 MNIST')
+    parser.add_argument('--model', type=str, default='kf_attention', 
+                        choices=['kf_attention', 'kf_layer', 'kf_pooling', 
+                                 'hf_attention', 'hf_layer', 'hf_pooling'])
     parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
@@ -130,8 +175,8 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = KFPooling().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4) # added weight decay
+    model = ModelWrapper(mode=args.model, **model_params).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr) # weight_decay=1e-4) # added weight decay
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
@@ -140,7 +185,7 @@ def main():
         scheduler.step()
 
     if args.save_model:
-        torch.save(model.state_dict(), "mnist_KFAttention.pt")
+        torch.save(model.state_dict(), "mnist_3on3.pt")
 
 if __name__ == '__main__':
     main()
