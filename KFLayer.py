@@ -34,7 +34,7 @@ class KFLayer(nn.Module):
 
         # added clipping
         norm_x = torch.linalg.vector_norm(x, dim=-1, keepdim=True)
-        factor = torch.clamp(3.0 / (norm_x + 1e-7), max=1.0)
+        factor = torch.clamp(3.5 / (norm_x + 1e-7), max=1.0)
         return x * factor
 
     def _expmap0(self, x):

@@ -28,15 +28,16 @@ class ModelWrapper(nn.Module):
         
         # Karcher Flow Models
         if mode == "kf_attention":
-            self.core = KFAttention(query_dim=hidden_dim, stored_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+            self.core = KFAttention(state_dim=hidden_dim, memory_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
         elif mode == "kf_pooling":
-            self.core = KFPooling(num_queries=1, stored_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
-        elif mode == "kf_layer":
-            self.core = KFLayer(num_memories=num_memories, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+            self.core = KFPooling(state_dim=hidden_dim, memory_dim=hidden_dim, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
+            self.static_query = nn.Parameter(torch.randn(1, hidden_dim) * 0.02)
+        # elif mode == "kf_layer":
+        #     self.core = KFLayer(num_memories=num_memories, hopfield_dim=hidden_dim, out_dim=hidden_dim, beta=beta)
             
         # HNIAYN Models
         elif mode == "hf_attention":
-            self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1, dropout=0.0)
+            self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1)
         elif mode == "hf_pooling":
             self.core = HopfieldCore(embed_dim=hidden_dim, num_heads=1, query_as_static=True)
             self.static_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
@@ -61,9 +62,10 @@ class ModelWrapper(nn.Module):
         hniayn_embeds = embeds.unsqueeze(0) # expects (SeqLen, B, hidden_dim)
 
         if self.mode == "kf_attention":
-            z = self.core(embeds, embeds)
+            z = self.core(embeds, embeds, embeds)
         elif self.mode == "kf_pooling":
-            z = self.core(embeds).squeeze(1)
+            q = self.static_query
+            z = self.core(q, embeds, embeds)
         elif self.mode == "kf_layer":
             z = self.core(embeds)
         elif self.mode == "hf_attention":
